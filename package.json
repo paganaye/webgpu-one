@@ -1,0 +1,18 @@
+{
+  "name": "webgpu-one",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "chrome": "google-chrome --enable-unsafe-webgpu --enable-features=Vulkan,UseSkiaRenderer http://localhost:5173/",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "triangle": "google-chrome --enable-unsafe-webgpu --enable-features=Vulkan,UseSkiaRenderer https://webgpu.github.io/webgpu-samples/samples/helloTriangle"
+  },
+  "devDependencies": {
+    "@webgpu/types": "^0.1.32",
+    "typescript": "^5.0.2",
+    "vite": "^4.3.2"
+  }
+}
