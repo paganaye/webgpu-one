@@ -1,13 +1,12 @@
 import triangleVertWGSL from './triangle.vert.wgsl?raw';
 import redFragWGSL from './red.frag.wgsl?raw';
 
-export async function setupWebGpu(element: HTMLDivElement, canvas: HTMLCanvasElement) {
+export async function setupWebGpu(canvas: HTMLCanvasElement, output: HTMLDivElement) {
   let gpu = navigator.gpu
   if (!gpu) {
-    element.innerHTML = "No navigator.gpu in this browser";
+    output.innerHTML = "No navigator.gpu in this browser";
     return
   }
-  element.innerHTML = "GOOD";
   const adapter = await navigator.gpu.requestAdapter();
   const device = await adapter!.requestDevice();
 
@@ -50,7 +49,6 @@ export async function setupWebGpu(element: HTMLDivElement, canvas: HTMLCanvasEle
 
   function frame() {
     // Sample is no longer the active page.
-
     const commandEncoder = device.createCommandEncoder();
     const textureView = context.getCurrentTexture().createView();
 

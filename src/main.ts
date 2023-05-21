@@ -1,6 +1,35 @@
 import './style.css'
-import { setupWebGpu } from './webgpu'
 
-setupWebGpu(document.getElementById('app') as HTMLDivElement, document.getElementById('canvas') as HTMLCanvasElement)
+let menu = document.getElementById('menu') as HTMLDivElement
+let canvas = document.getElementById('canvas') as HTMLCanvasElement
+let output = document.getElementById('output') as HTMLCanvasElement
 
 
+let pages = ["triangle", "game-of-life"];
+let page = document.location.hash
+if (page[0] == '#') page = page.substring(1);
+else document.location.hash = "#triangle";
+
+pages.forEach(p => {
+  if (p == page) {
+    menu.append(p)
+  } else {
+    let link = document.createElement("a");
+    link.href = "#" + p;
+    link.innerText = p;
+    menu.append(link)
+  }
+  menu.append(" ")
+})
+
+window.onhashchange = () => document.location.reload();
+
+try {
+  let module = await import("./" + page + "/" + page + ".ts");
+  console.log(module, typeof module);
+  if (typeof module === 'object') {
+    module.setupWebGpu(canvas, output);
+  }
+} catch (error) {
+  output.append(error as string);
+}
