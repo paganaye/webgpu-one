@@ -1,24 +1,12 @@
-import { mat4, vec3 } from 'wgpu-matrix';
-import particleWGSL from './test.wsgl?raw';
-import probabilityMapWGSL from './test-map.wsgl?raw';
+import computeWGSL from './test.compute.wgsl?raw';
+import vertWGSL from './test.vert.wgsl?raw';
+import fragWGSL from './test.frag.wgsl?raw';
 
-const numParticles = 50000;
-const particlePositionOffset = 0;
-const particleColorOffset = 4 * 4;
-const particleInstanceByteSize =
-  3 * 4 + // position
-  1 * 4 + // lifetime
-  4 * 4 + // color
-  3 * 4 + // velocity
-  1 * 4 + // padding
-  0;
-
-export async function setupWebGpu(canvas: HTMLCanvasElement, _output: HTMLDivElement) {
-  const adapter = (await navigator.gpu.requestAdapter())!;
+export async function setupWebGpu(canvas: HTMLCanvasElement, output: HTMLDivElement) {
+  const adapter = (await navigator.gpu.requestAdapter())!!;
   const device = await adapter.requestDevice();
 
   const context = canvas.getContext('webgpu') as GPUCanvasContext;
-
   const devicePixelRatio = window.devicePixelRatio || 1;
   canvas.width = canvas.clientWidth * devicePixelRatio;
   canvas.height = canvas.clientHeight * devicePixelRatio;
@@ -30,417 +18,255 @@ export async function setupWebGpu(canvas: HTMLCanvasElement, _output: HTMLDivEle
     alphaMode: 'premultiplied',
   });
 
-  const particlesBuffer = device.createBuffer({
-    size: numParticles * particleInstanceByteSize,
-    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE,
-  });
+  const GameOptions = {
+    width: 128,
+    height: 128,
+    timestep: 4,
+    workgroupSize: 8,
+  };
 
-  const renderPipeline = device.createRenderPipeline({
-    layout: 'auto',
-    vertex: {
-      module: device.createShaderModule({
-        code: particleWGSL,
-      }),
-      entryPoint: 'vs_main',
-      buffers: [
-        {
-          // instanced particles buffer
-          arrayStride: particleInstanceByteSize,
-          stepMode: 'instance',
-          attributes: [
-            {
-              // position
-              shaderLocation: 0,
-              offset: particlePositionOffset,
-              format: 'float32x3',
-            },
-            {
-              // color
-              shaderLocation: 1,
-              offset: particleColorOffset,
-              format: 'float32x4',
-            },
-          ],
-        },
-        {
-          // quad vertex buffer
-          arrayStride: 2 * 4, // vec2<f32>
-          stepMode: 'vertex',
-          attributes: [
-            {
-              // vertex positions
-              shaderLocation: 2,
-              offset: 0,
-              format: 'float32x2',
-            },
-          ],
-        },
-      ],
-    },
-    fragment: {
-      module: device.createShaderModule({
-        code: particleWGSL,
-      }),
-      entryPoint: 'fs_main',
-      targets: [
-        {
-          format: presentationFormat,
-          blend: {
-            color: {
-              srcFactor: 'src-alpha',
-              dstFactor: 'one',
-              operation: 'add',
-            },
-            alpha: {
-              srcFactor: 'zero',
-              dstFactor: 'one',
-              operation: 'add',
-            },
-          },
-        },
-      ],
-    },
-    primitive: {
-      topology: 'triangle-list',
-    },
-
-    depthStencil: {
-      depthWriteEnabled: false,
-      depthCompare: 'less',
-      format: 'depth24plus',
-    },
-  });
-
-  const depthTexture = device.createTexture({
-    size: [canvas.width, canvas.height],
-    format: 'depth24plus',
-    usage: GPUTextureUsage.RENDER_ATTACHMENT,
-  });
-
-  const uniformBufferSize =
-    4 * 4 * 4 + // modelViewProjectionMatrix : mat4x4<f32>
-    3 * 4 + // right : vec3<f32>
-    4 + // padding
-    3 * 4 + // up : vec3<f32>
-    4 + // padding
-    0;
-  const uniformBuffer = device.createBuffer({
-    size: uniformBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-  });
-
-  const uniformBindGroup = device.createBindGroup({
-    layout: renderPipeline.getBindGroupLayout(0),
+  const computeShader = device.createShaderModule({ code: computeWGSL });
+  const bindGroupLayoutCompute = device.createBindGroupLayout({
     entries: [
       {
         binding: 0,
-        resource: {
-          buffer: uniformBuffer,
-        },
-      },
-    ],
-  });
-
-  const renderPassDescriptor: GPURenderPassDescriptor = {
-    colorAttachments: [
-      {
-        view: undefined, // Assigned later
-        clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
-        loadOp: 'clear',
-        storeOp: 'store',
-      },
-    ] as any,
-    depthStencilAttachment: {
-      view: depthTexture.createView(),
-
-      depthClearValue: 1.0,
-      depthLoadOp: 'clear',
-      depthStoreOp: 'store',
-    },
-  };
-
-  //////////////////////////////////////////////////////////////////////////////
-  // Quad vertex buffer
-  //////////////////////////////////////////////////////////////////////////////
-  const quadVertexBuffer = device.createBuffer({
-    size: 6 * 2 * 4, // 6x vec2<f32>
-    usage: GPUBufferUsage.VERTEX,
-    mappedAtCreation: true,
-  });
-  // prettier-ignore
-  const vertexData = [
-    -1.0, -1.0, +1.0, -1.0, -1.0, +1.0, -1.0, +1.0, +1.0, -1.0, +1.0, +1.0,
-  ];
-  new Float32Array(quadVertexBuffer.getMappedRange()).set(vertexData);
-  quadVertexBuffer.unmap();
-
-  //////////////////////////////////////////////////////////////////////////////
-  // Texture
-  //////////////////////////////////////////////////////////////////////////////
-  let texture: GPUTexture;
-  let textureWidth = 1;
-  let textureHeight = 1;
-  let numMipLevels = 1;
-  {
-    const img = document.createElement('img');
-    img.src = new URL(
-      '/webgpu.png',
-      import.meta.url
-    ).toString();
-    await img.decode();
-    const imageBitmap = await createImageBitmap(img);
-
-    // Calculate number of mip levels required to generate the probability map
-    while (
-      textureWidth < imageBitmap.width ||
-      textureHeight < imageBitmap.height
-    ) {
-      textureWidth *= 2;
-      textureHeight *= 2;
-      numMipLevels++;
-    }
-    texture = device.createTexture({
-      size: [imageBitmap.width, imageBitmap.height, 1],
-      mipLevelCount: numMipLevels,
-      format: 'rgba8unorm',
-      usage:
-        GPUTextureUsage.TEXTURE_BINDING |
-        GPUTextureUsage.STORAGE_BINDING |
-        GPUTextureUsage.COPY_DST |
-        GPUTextureUsage.RENDER_ATTACHMENT,
-    });
-    device.queue.copyExternalImageToTexture(
-      { source: imageBitmap },
-      { texture: texture },
-      [imageBitmap.width, imageBitmap.height]
-    );
-  }
-
-  //////////////////////////////////////////////////////////////////////////////
-  // Probability map generation
-  // The 0'th mip level of texture holds the color data and spawn-probability in
-  // the alpha channel. The mip levels 1..N are generated to hold spawn
-  // probabilities up to the top 1x1 mip level.
-  //////////////////////////////////////////////////////////////////////////////
-  {
-    const probabilityMapImportLevelPipeline = device.createComputePipeline({
-      layout: 'auto',
-      compute: {
-        module: device.createShaderModule({ code: probabilityMapWGSL }),
-        entryPoint: 'import_level',
-      },
-    });
-    const probabilityMapExportLevelPipeline = device.createComputePipeline({
-      layout: 'auto',
-      compute: {
-        module: device.createShaderModule({ code: probabilityMapWGSL }),
-        entryPoint: 'export_level',
-      },
-    });
-
-    const probabilityMapUBOBufferSize =
-      1 * 4 + // stride
-      3 * 4 + // padding
-      0;
-    const probabilityMapUBOBuffer = device.createBuffer({
-      size: probabilityMapUBOBufferSize,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    const buffer_a = device.createBuffer({
-      size: textureWidth * textureHeight * 4,
-      usage: GPUBufferUsage.STORAGE,
-    });
-    const buffer_b = device.createBuffer({
-      size: textureWidth * textureHeight * 4,
-      usage: GPUBufferUsage.STORAGE,
-    });
-    device.queue.writeBuffer(
-      probabilityMapUBOBuffer,
-      0,
-      new Int32Array([textureWidth])
-    );
-    const commandEncoder = device.createCommandEncoder();
-    for (let level = 0; level < numMipLevels; level++) {
-      const levelWidth = textureWidth >> level;
-      const levelHeight = textureHeight >> level;
-      const pipeline =
-        level == 0
-          ? probabilityMapImportLevelPipeline.getBindGroupLayout(0)
-          : probabilityMapExportLevelPipeline.getBindGroupLayout(0);
-      const probabilityMapBindGroup = device.createBindGroup({
-        layout: pipeline,
-        entries: [
-          {
-            // ubo
-            binding: 0,
-            resource: { buffer: probabilityMapUBOBuffer },
-          },
-          {
-            // buf_in
-            binding: 1,
-            resource: { buffer: level & 1 ? buffer_a : buffer_b },
-          },
-          {
-            // buf_out
-            binding: 2,
-            resource: { buffer: level & 1 ? buffer_b : buffer_a },
-          },
-          {
-            // tex_in / tex_out
-            binding: 3,
-            resource: texture.createView({
-              format: 'rgba8unorm',
-              dimension: '2d',
-              baseMipLevel: level,
-              mipLevelCount: 1,
-            }),
-          },
-        ],
-      });
-      if (level == 0) {
-        const passEncoder = commandEncoder.beginComputePass();
-        passEncoder.setPipeline(probabilityMapImportLevelPipeline);
-        passEncoder.setBindGroup(0, probabilityMapBindGroup);
-        passEncoder.dispatchWorkgroups(Math.ceil(levelWidth / 64), levelHeight);
-        passEncoder.end();
-      } else {
-        const passEncoder = commandEncoder.beginComputePass();
-        passEncoder.setPipeline(probabilityMapExportLevelPipeline);
-        passEncoder.setBindGroup(0, probabilityMapBindGroup);
-        passEncoder.dispatchWorkgroups(Math.ceil(levelWidth / 64), levelHeight);
-        passEncoder.end();
-      }
-    }
-    device.queue.submit([commandEncoder.finish()]);
-  }
-
-  //////////////////////////////////////////////////////////////////////////////
-  // Simulation compute pipeline
-  //////////////////////////////////////////////////////////////////////////////
-  const simulationParams = {
-    simulate: true,
-    deltaTime: 0.1,
-  };
-
-  const simulationUBOBufferSize =
-    1 * 4 + // deltaTime
-    3 * 4 + // padding
-    4 * 4 + // seed
-    0;
-  const simulationUBOBuffer = device.createBuffer({
-    size: simulationUBOBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-  });
-
-
-  const computePipeline = device.createComputePipeline({
-    layout: 'auto',
-    compute: {
-      module: device.createShaderModule({
-        code: particleWGSL,
-      }),
-      entryPoint: 'simulate',
-    },
-  });
-  const computeBindGroup = device.createBindGroup({
-    layout: computePipeline.getBindGroupLayout(0),
-    entries: [
-      {
-        binding: 0,
-        resource: {
-          buffer: simulationUBOBuffer,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: {
+          type: 'read-only-storage',
         },
       },
       {
         binding: 1,
-        resource: {
-          buffer: particlesBuffer,
-          offset: 0,
-          size: numParticles * particleInstanceByteSize,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: {
+          type: 'read-only-storage',
         },
       },
       {
         binding: 2,
-        resource: texture.createView(),
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: {
+          type: 'storage',
+        },
       },
     ],
   });
 
-  const aspect = canvas.width / canvas.height;
-  const projection = mat4.perspective((2 * Math.PI) / 5, aspect, 1, 100.0);
-  const view = mat4.create();
-  const mvp = mat4.create();
+  const squareVertices = new Uint32Array([0, 0, 0, 1, 1, 0, 1, 1]);
+  const squareBuffer = device.createBuffer({
+    size: squareVertices.byteLength,
+    usage: GPUBufferUsage.VERTEX,
+    mappedAtCreation: true,
+  });
+  new Uint32Array(squareBuffer.getMappedRange()).set(squareVertices);
+  squareBuffer.unmap();
 
-  function frame() {
-    // Sample is no longer the active page.
-    //if (!pageState.active) return;
+  const squareStride: GPUVertexBufferLayout = {
+    arrayStride: 2 * squareVertices.BYTES_PER_ELEMENT,
+    stepMode: 'vertex',
+    attributes: [
+      {
+        shaderLocation: 1,
+        offset: 0,
+        format: 'uint32x2',
+      },
+    ],
+  };
 
-    device.queue.writeBuffer(
-      simulationUBOBuffer,
-      0,
-      new Float32Array([
-        simulationParams.simulate ? simulationParams.deltaTime : 0.0,
-        0,
-        0,
-        0, // padding
-        Math.random() * 100,
-        Math.random() * 100, // seed.xy
-        1 + Math.random(),
-        1 + Math.random(), // seed.zw
-      ])
-    );
+  const vertexShader = device.createShaderModule({ code: vertWGSL });
+  const fragmentShader = device.createShaderModule({ code: fragWGSL });
+  let commandEncoder: GPUCommandEncoder;
 
-    mat4.identity(view);
-    mat4.translate(view, vec3.fromValues(0, 0, -3), view);
-    mat4.rotateX(view, Math.PI * -0.2, view);
-    mat4.multiply(projection, view, mvp);
+  const bindGroupLayoutRender = device.createBindGroupLayout({
+    entries: [
+      {
+        binding: 0,
+        visibility: GPUShaderStage.VERTEX,
+        buffer: {
+          type: 'uniform',
+        },
+      },
+    ],
+  });
 
-    // prettier-ignore
-    device.queue.writeBuffer(
-      uniformBuffer,
-      0,
-      new Float32Array([
-        // modelViewProjectionMatrix
-        mvp[0], mvp[1], mvp[2], mvp[3],
-        mvp[4], mvp[5], mvp[6], mvp[7],
-        mvp[8], mvp[9], mvp[10], mvp[11],
-        mvp[12], mvp[13], mvp[14], mvp[15],
+  const cellsStride: GPUVertexBufferLayout = {
+    arrayStride: Uint32Array.BYTES_PER_ELEMENT,
+    stepMode: 'instance',
+    attributes: [
+      {
+        shaderLocation: 0,
+        offset: 0,
+        format: 'uint32',
+      },
+    ],
+  };
 
-        view[0], view[4], view[8], // right
+  // function addGUI() {
+  //   gui.add(GameOptions, 'timestep', 1, 60, 1);
+  //   gui.add(GameOptions, 'width', 16, 1024, 16).onFinishChange(resetGameData);
+  //   gui.add(GameOptions, 'height', 16, 1024, 16).onFinishChange(resetGameData);
+  //   gui
+  //     .add(GameOptions, 'workgroupSize', [4, 8, 16])
+  //     .onFinishChange(resetGameData);
+  // }
 
-        0, // padding
+  let wholeTime = 0,
+    loopTimes = 0,
+    buffer0: GPUBuffer,
+    buffer1: GPUBuffer;
+  let render: () => void = () => { };
 
-        view[1], view[5], view[9], // up
-
-        0, // padding
-      ])
-    );
-    const swapChainTexture = context.getCurrentTexture();
-    // prettier-ignore
-    renderPassDescriptor.colorAttachments[0].view = swapChainTexture.createView();
-
-    const commandEncoder = device.createCommandEncoder();
-    {
-      const passEncoder = commandEncoder.beginComputePass();
-      passEncoder.setPipeline(computePipeline);
-      passEncoder.setBindGroup(0, computeBindGroup);
-      passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
-      passEncoder.end();
+  function resetGameData() {
+    // compute pipeline
+    const computePipeline = device.createComputePipeline({
+      layout: device.createPipelineLayout({
+        bindGroupLayouts: [bindGroupLayoutCompute],
+      }),
+      compute: {
+        module: computeShader,
+        entryPoint: 'main',
+        constants: {
+          blockSize: GameOptions.workgroupSize,
+        },
+      },
+    });
+    const sizeBuffer = device.createBuffer({
+      size: 2 * Uint32Array.BYTES_PER_ELEMENT,
+      usage:
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.UNIFORM |
+        GPUBufferUsage.COPY_DST |
+        GPUBufferUsage.VERTEX,
+      mappedAtCreation: true,
+    });
+    new Uint32Array(sizeBuffer.getMappedRange()).set([
+      GameOptions.width,
+      GameOptions.height,
+    ]);
+    sizeBuffer.unmap();
+    const length = GameOptions.width * GameOptions.height;
+    const cells = new Uint32Array(length);
+    for (let i = 0; i < length; i++) {
+      cells[i] = Math.random() < 0.25 ? 1 : 0;
     }
-    {
-      const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
-      passEncoder.setPipeline(renderPipeline);
-      passEncoder.setBindGroup(0, uniformBindGroup);
-      passEncoder.setVertexBuffer(0, particlesBuffer);
-      passEncoder.setVertexBuffer(1, quadVertexBuffer);
-      passEncoder.draw(6, numParticles, 0, 0);
-      passEncoder.end();
-    }
 
-    device.queue.submit([commandEncoder.finish()]);
+    buffer0 = device.createBuffer({
+      size: cells.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX,
+      mappedAtCreation: true,
+    });
+    new Uint32Array(buffer0.getMappedRange()).set(cells);
+    buffer0.unmap();
 
-    requestAnimationFrame(frame);
+    buffer1 = device.createBuffer({
+      size: cells.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX,
+    });
+
+    const bindGroup0 = device.createBindGroup({
+      layout: bindGroupLayoutCompute,
+      entries: [
+        { binding: 0, resource: { buffer: sizeBuffer } },
+        { binding: 1, resource: { buffer: buffer0 } },
+        { binding: 2, resource: { buffer: buffer1 } },
+      ],
+    });
+
+    const bindGroup1 = device.createBindGroup({
+      layout: bindGroupLayoutCompute,
+      entries: [
+        { binding: 0, resource: { buffer: sizeBuffer } },
+        { binding: 1, resource: { buffer: buffer1 } },
+        { binding: 2, resource: { buffer: buffer0 } },
+      ],
+    });
+
+    const renderPipeline = device.createRenderPipeline({
+      layout: device.createPipelineLayout({
+        bindGroupLayouts: [bindGroupLayoutRender],
+      }),
+      primitive: {
+        topology: 'triangle-strip',
+      },
+      vertex: {
+        module: vertexShader,
+        entryPoint: 'main',
+        buffers: [cellsStride, squareStride],
+      },
+      fragment: {
+        module: fragmentShader,
+        entryPoint: 'main',
+        targets: [
+          {
+            format: presentationFormat,
+          },
+        ],
+      },
+    });
+
+    const uniformBindGroup = device.createBindGroup({
+      layout: renderPipeline.getBindGroupLayout(0),
+      entries: [
+        {
+          binding: 0,
+          resource: {
+            buffer: sizeBuffer,
+            offset: 0,
+            size: 2 * Uint32Array.BYTES_PER_ELEMENT,
+          },
+        },
+      ],
+    });
+
+    loopTimes = 0;
+    render = () => {
+      const view = context.getCurrentTexture().createView();
+      const renderPass: GPURenderPassDescriptor = {
+        colorAttachments: [
+          {
+            view,
+            loadOp: 'clear',
+            storeOp: 'store',
+          },
+        ],
+      };
+      commandEncoder = device.createCommandEncoder();
+
+      // compute
+      const passEncoderCompute = commandEncoder.beginComputePass();
+      passEncoderCompute.setPipeline(computePipeline);
+      passEncoderCompute.setBindGroup(0, loopTimes ? bindGroup1 : bindGroup0);
+      passEncoderCompute.dispatchWorkgroups(
+        GameOptions.width / GameOptions.workgroupSize,
+        GameOptions.height / GameOptions.workgroupSize
+      );
+      passEncoderCompute.end();
+      // render
+      const passEncoderRender = commandEncoder.beginRenderPass(renderPass);
+      passEncoderRender.setPipeline(renderPipeline);
+      passEncoderRender.setVertexBuffer(0, loopTimes ? buffer1 : buffer0);
+      passEncoderRender.setVertexBuffer(1, squareBuffer);
+      passEncoderRender.setBindGroup(0, uniformBindGroup);
+      passEncoderRender.draw(4, length);
+      passEncoderRender.end();
+
+      device.queue.submit([commandEncoder.finish()]);
+    };
   }
-  requestAnimationFrame(frame);
-};
 
+  //addGUI();
+  resetGameData();
+
+  (function loop() {
+    if (GameOptions.timestep) {
+      wholeTime++;
+      if (wholeTime >= GameOptions.timestep) {
+        render();
+        wholeTime -= GameOptions.timestep;
+        loopTimes = 1 - loopTimes;
+      }
+    }
+
+    requestAnimationFrame(loop);
+  })();
+};
