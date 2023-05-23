@@ -25,7 +25,7 @@ pages.forEach(p => {
 window.onhashchange = () => document.location.reload();
 
 try {
-  let module = await import("./" + page + "/" + page + ".ts");
+  let module = await import("./" + page + "/main.ts");
   console.log(module, typeof module);
   if (typeof module === 'object') {
     module.setupWebGpu(canvas, output);
