@@ -5,7 +5,8 @@ import computeRasterizerWGSL from './computeRasterizer.wgsl?raw';
 import { WebIO } from '@gltf-transform/core';
 
 export async function setupWebGpu(canvas: HTMLCanvasElement, output: HTMLDivElement) {
-  const verticesArray = await loadModel('/suzanne.glb');
+  const verticesArray = await loadModel('/box.gltf');
+  //const verticesArray = await loadModel('/suzanne.glb');
 
   const adapter = (await navigator.gpu.requestAdapter())!;
   const device = await adapter.requestDevice();

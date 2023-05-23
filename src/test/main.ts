@@ -1,303 +1,191 @@
-import { mat4, vec3 } from 'gl-matrix';
-import '../style.css'
-import fullscreenQuadWGSL from './fullscreenQuad.wgsl?raw';
-import computeRasterizerWGSL from './computeRasterizer.wgsl?raw';
-import { WebIO } from '@gltf-transform/core';
+// inspired originally by Tim Holman
+// Bezier curve simulator
+// https://codepen.io/tholman/pen/kKKVxB?editors=0010
 
-export async function setupWebGpu(canvas: HTMLCanvasElement, output: HTMLDivElement) {
-  const verticesArray = await loadModel('/suzanne.glb');
-
-  const adapter = (await navigator.gpu.requestAdapter())!;
-  const device = await adapter.requestDevice();
-  const context = canvas.getContext("webgpu")!;
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-
-  const devicePixelRatio = window.devicePixelRatio || 1;
-  const presentationSize = [
-    Math.floor(canvas.clientWidth * devicePixelRatio),
-    Math.floor(canvas.clientHeight * devicePixelRatio),
-  ];
-
-  const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
-  context.configure({
-    device,
-    format: presentationFormat,
-    alphaMode: "opaque"
-  });
-
-
-  const { addComputePass, outputColorBuffer } = createComputePass(presentationSize, device, verticesArray);
-  const { addFullscreenPass } = createFullscreenPass(presentationFormat, device, presentationSize, outputColorBuffer);
-
-  function draw() {
-    const commandEncoder = device.createCommandEncoder();
-
-    addComputePass(commandEncoder);
-    addFullscreenPass(context, commandEncoder);
-
-    device.queue.submit([commandEncoder.finish()]);
-
-    requestAnimationFrame(draw);
-  }
-
-  draw();
+interface Point {
+  x: number; y: number, name?: string
 }
-
-function createFullscreenPass(presentationFormat: any, device: any, presentationSize: any, finalColorBuffer: any) {
-  const fullscreenQuadBindGroupLayout = device.createBindGroupLayout({
-    entries: [
-      {
-        binding: 0,
-        visibility: GPUShaderStage.FRAGMENT,
-        buffer: {
-          type: "uniform"
-        }
-      },
-      {
-        binding: 1,// the color buffer
-        visibility: GPUShaderStage.FRAGMENT,
-        buffer: {
-          type: "read-only-storage"
-        }
-      }
-    ]
-  });
-
-  const fullscreenQuadPipeline = device.createRenderPipeline({
-    layout: device.createPipelineLayout({
-      bindGroupLayouts: [fullscreenQuadBindGroupLayout]
-    }),
-    vertex: {
-      module: device.createShaderModule({
-        code: fullscreenQuadWGSL,
-      }),
-      entryPoint: 'vert_main',
-    },
-    fragment: {
-      module: device.createShaderModule({
-        code: fullscreenQuadWGSL,
-      }),
-      entryPoint: 'frag_main',
-      targets: [
-        {
-          format: presentationFormat,
-        },
-      ],
-    },
-    primitive: {
-      topology: 'triangle-list',
-    },
-  });
-
-  const uniformBufferSize = 4 * 2; // screen width & height
-  const uniformBuffer = device.createBuffer({
-    size: uniformBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-  });
-
-  const fullscreenQuadBindGroup = device.createBindGroup({
-    layout: fullscreenQuadBindGroupLayout,
-    entries: [
-      {
-        binding: 0,
-        resource: {
-          buffer: uniformBuffer
-        }
-      },
-      {
-        binding: 1,
-        resource: {
-          buffer: finalColorBuffer
-        }
-      }
-    ],
-  });
-
-  const renderPassDescriptor = {
-    colorAttachments: [
-      {
-        view: undefined, // Assigned later
-
-        clearValue: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
-        loadOp: 'clear',
-        storeOp: 'store',
-      },
-    ]
+class BezierTriangle {
+  private context: CanvasRenderingContext2D;
+  private mouseDown = false;
+  mouse = {
+    x: 0,
+    y: 0,
   };
+  selected: any;
+  points: Point[] = [];
 
-  const addFullscreenPass = (context: any, commandEncoder: any) => {
-    device.queue.writeBuffer(
-      uniformBuffer,
-      0,
-      new Float32Array([presentationSize[0], presentationSize[1]]));
+  constructor(readonly canvas: HTMLCanvasElement) {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    this.selected = null;
 
-    renderPassDescriptor.colorAttachments[0].view = context
-      .getCurrentTexture()
-      .createView();
+    this.context = canvas.getContext("2d")!;
 
-    const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
-    passEncoder.setPipeline(fullscreenQuadPipeline);
-    passEncoder.setBindGroup(0, fullscreenQuadBindGroup);
-    passEncoder.draw(6, 1, 0, 0);
-    passEncoder.end();
+    // Set canvas to full screen.
+    canvas.width = width;
+    canvas.height = height;
+    this.canvas.addEventListener("mousedown", (e) => this.onMouseDown(e), false);
+    this.canvas.addEventListener("mouseup", (e) => this.onMouseUp(e), false);
+    this.canvas.addEventListener("mousemove", (e) => this.onMouseMove(e), false);
   }
 
-  return { addFullscreenPass };
-}
-
-function createComputePass(presentationSize: any, device: any, verticesArray: any) {
-  const WIDTH = presentationSize[0];
-  const HEIGHT = presentationSize[1];
-  const COLOR_CHANNELS = 3;
-
-  const NUMBERS_PER_VERTEX = 3;
-  const vertexCount = verticesArray.length / NUMBERS_PER_VERTEX;
-  const verticesBuffer = device.createBuffer({
-    size: verticesArray.byteLength,
-    usage: GPUBufferUsage.STORAGE,
-    mappedAtCreation: true,
-  });
-  new Float32Array(verticesBuffer.getMappedRange()).set(verticesArray);
-  verticesBuffer.unmap();
-
-  const outputColorBufferSize = Uint32Array.BYTES_PER_ELEMENT * (WIDTH * HEIGHT) * COLOR_CHANNELS;
-  const outputColorBuffer = device.createBuffer({
-    size: outputColorBufferSize,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
-  });
-
-  const UBOBufferSize =
-    4 * 2 + // screen width & height
-    4 * 16 + // 4x4 matrix
-    8 // extra padding for alignment
-  const UBOBuffer = device.createBuffer({
-    size: UBOBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-  });
-
-  const bindGroupLayout = device.createBindGroupLayout({
-    entries: [
-      {
-        binding: 0,
-        visibility: GPUShaderStage.COMPUTE,
-        buffer: {
-          type: "storage"
-        }
-      },
-      {
-        binding: 1,
-        visibility: GPUShaderStage.COMPUTE,
-        buffer: {
-          type: "read-only-storage"
-        }
-      },
-      {
-        binding: 2,
-        visibility: GPUShaderStage.COMPUTE,
-        buffer: {
-          type: "uniform",
-        },
+  // Render the key points of the curve
+  renderPoints() {
+    this.canvas.width = this.canvas.width;
+    for (let i = 0; i < this.points.length; i++) {
+      // Large points
+      let point1 = this.points[i]
+      this.drawPoint(point1, 2);
+      this.drawPoint(point1, i & 1 ? 12 : 5);
+      if (point1.name) {
+        this.context.fillText(point1.name, point1.x + 15, point1.y)
       }
-    ]
-  });
+      this.context.lineWidth = 0.2;
+      let point2 = this.points[(i + 1) % this.points.length]
+      this.context.beginPath();
+      this.context.moveTo(point1.x, point1.y);
+      this.context.lineTo(point2.x, point2.y);
+      this.context.stroke();
+    }
+  }
 
-  const bindGroup = device.createBindGroup({
-    layout: bindGroupLayout,
-    entries: [
-      {
-        binding: 0,
-        resource: {
-          buffer: outputColorBuffer
-        }
-      },
-      {
-        binding: 1,
-        resource: {
-          buffer: verticesBuffer
-        }
-      },
-      {
-        binding: 2,
-        resource: {
-          buffer: UBOBuffer
+  drawPoint(point: { x: number; y: number }, size: number) {
+    this.context.fillStyle = "rgba(0, 0, 0, 1)";
+    this.context.lineWidth = 3;
+    this.context.beginPath();
+    this.context.arc(point.x, point.y, size, 0, Math.PI * 2, true);
+    this.context.closePath();
+    this.context.stroke();
+  }
+
+  draw() {
+    this.renderPoints();
+    this.drawFatTriangle(this.points);
+  }
+
+  drawFatTriangle(p: Point[]) {
+
+    this.drawThinTriangle([
+      p[0], p[1], p[2], p[3], p[4], p[5]
+    ])
+    this.drawThinTriangle([
+      p[0], p[1], p[2], p[3], p[4], p[5]
+    ])
+  }
+
+  drawThinTriangle(p: Point[]) {
+    this.drawArc(p[0], p[1], p[2]);
+    this.drawArc(p[2], p[3], p[4]);
+    this.drawArc(p[4], p[5], p[0]);
+  }
+
+  midPoint(p0: Point, p1: Point): Point {
+    return { x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2 }
+  }
+
+
+  drawArc(p0: Point, p1: Point, p2: Point) {
+    let a = this.midPoint(p0, p1)
+    let b = this.midPoint(p1, p2)
+    let m = this.midPoint(a, b)
+
+    this.context.beginPath();
+    this.context.arc(m.x, m.y, 2, 0, Math.PI * 2, true);
+    this.context.closePath();
+    this.context.fill();
+    const dx = p0.x - p2.x;
+    const dy = p0.y - p2.y;
+    const sqrDist = dx * dx + dy * dy;
+
+    if (sqrDist > 25) {
+      this.drawArc(p0, a, m)
+      this.drawArc(m, b, p2)
+    }
+  }
+
+
+
+  // ------------------------------------------------------------------------------
+  // Loading data / Saving data
+  // ------------------------------------------------------------------------------
+
+  // TODO: Learn the proper regex method
+  // Load data string.
+  loadData(data: Point[]) {
+    this.points = data;
+  }
+
+  // Moving/Creating/Deleting points
+  onMouseUp(_event: MouseEvent) {
+    this.mouseDown = false;
+    this.selected = null;
+    console.log("points=", JSON.stringify(this.points.map((p) => [p.x, p.y])));
+  }
+
+  onMouseMove(event: any) {
+    this.mouse.x = event.offsetX || event.layerX - this.canvas.offsetLeft;
+    this.mouse.y = event.offsetY || event.layerY - this.canvas.offsetTop;
+
+    if (this.mouseDown && this.selected != null) {
+      this.points[this.selected].x = this.mouse.x;
+      this.points[this.selected].y = this.mouse.y;
+      this.draw();
+
+    }
+  }
+
+  onMouseDown(event: MouseEvent) {
+    // Prevent dragging of points from confusing the screen.
+    event.preventDefault();
+
+    this.mouseDown = true;
+    for (let i = 0; i < this.points.length; i++) {
+      const dx = this.points[i].x - this.mouse.x;
+      const dy = this.points[i].y - this.mouse.y;
+      const sqrDist = dx * dx + dy * dy;
+
+      // You may now drag selected point
+      if (sqrDist < 30 * 30) {
+        if (this.selected === null) {
+          this.selected = i;
         }
       }
-    ]
-  });
-
-  const computeRasterizerModule = device.createShaderModule({ code: computeRasterizerWGSL });
-  const rasterizerPipeline = device.createComputePipeline({
-    layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
-    compute: { module: computeRasterizerModule, entryPoint: "main" }
-  });
-  const clearPipeline = device.createComputePipeline({
-    layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
-    compute: { module: computeRasterizerModule, entryPoint: "clear" }
-  });
-
-  const aspect = WIDTH / HEIGHT;
-  const projectionMatrix = mat4.create();
-  mat4.perspective(projectionMatrix, (2 * Math.PI) / 5, aspect, 1, 100.0);
-
-  const addComputePass = (commandEncoder: any) => {
-    // Compute model view projection matrix
-    const viewMatrix = mat4.create();
-    const now = Date.now() / 1000;
-    // Move the camera 
-    mat4.translate(viewMatrix, viewMatrix, vec3.fromValues(4, 3, -10));
-    const modelViewProjectionMatrix = mat4.create();
-    const modelMatrix = mat4.create();
-    // Rotate model over time
-    mat4.rotate(modelMatrix, modelMatrix, now, vec3.fromValues(0, 1, 0));
-    // Rotate model 90 degrees so that it is upright
-    mat4.rotate(modelMatrix, modelMatrix, Math.PI / 2, vec3.fromValues(1, 0, 0));
-    // Combine all into a modelViewProjection
-    mat4.multiply(viewMatrix, viewMatrix, modelMatrix);
-    mat4.multiply(modelViewProjectionMatrix, projectionMatrix, viewMatrix);
-
-    // Write values to uniform buffer object
-    const uniformData = [WIDTH, HEIGHT];
-    const uniformTypedArray = new Float32Array(uniformData);
-    device.queue.writeBuffer(UBOBuffer, 0, uniformTypedArray.buffer);
-    device.queue.writeBuffer(UBOBuffer, 16, modelViewProjectionMatrix.buffer);
-
-    const passEncoder = commandEncoder.beginComputePass();
-    let totalTimesToRun = Math.ceil((WIDTH * HEIGHT) / 256);
-    // Clear pass
-    passEncoder.setPipeline(clearPipeline);
-    passEncoder.setBindGroup(0, bindGroup);
-    passEncoder.dispatchWorkgroups(totalTimesToRun);
-    // Rasterizer pass
-    totalTimesToRun = Math.ceil((vertexCount / 3) / 256);
-    passEncoder.setPipeline(rasterizerPipeline);
-    passEncoder.setBindGroup(0, bindGroup);
-    passEncoder.dispatchWorkgroups(totalTimesToRun);
-
-    passEncoder.end();
+    }
   }
-
-  return { addComputePass, outputColorBuffer };
 }
 
-export async function loadModel(url: string) {
-  const io = new WebIO({ credentials: 'include' });
-  // const doc = await io.read('/src/compute-rasterizer/box.gltf?raw');
-  const doc = await io.read(url);
 
-  let mesh = (doc.getRoot() as any).meshes[0].getChild().primitives[0].getChild();
-  const positions = mesh.getAttribute('POSITION').getArray();
-  const indices = mesh.indices.getChild().getArray();
-  const finalPositions = [];
+export async function setupWebGpu(canvas: HTMLCanvasElement, _output: HTMLDivElement) {
 
-  for (let i = 0; i < indices.length; i++) {
-    const index1 = indices[i] * 3 + 0;
-    const index2 = indices[i] * 3 + 1;
-    const index3 = indices[i] * 3 + 2;
+  setTimeout(function () {
+    const bezierTriangle = new BezierTriangle(canvas);
+    bezierTriangle.loadData([
+      { x: 308, y: 816, name: "0" },
+      { x: 137, y: 613, name: "1" },
+      { x: 176, y: 397, name: "2" },
+      { x: 419, y: 194, name: "3" },
+      { x: 643, y: 429, name: "4" },
+      { x: 638, y: 678, name: "5" }
+    ]);
+    bezierTriangle.draw();
+  });
 
-    finalPositions.push(positions[index1]);
-    finalPositions.push(positions[index2]);
-    finalPositions.push(positions[index3]);
+  /**
+   * Provides requestAnimationFrame in a cross browser way.
+   * http://paulirish.com/2011/requestanimationframe-for-smart-animating/
+   */
+
+  if (!window.requestAnimationFrame) {
+    window.requestAnimationFrame = (function () {
+      return (
+        window.requestAnimationFrame ||
+        function (/* function */ callback: any, /* DOMElement */ _element: any) {
+          return window.setTimeout(callback, 1000 / 60);
+        }
+      );
+    })();
   }
-  return new Float32Array(finalPositions);
+
 }
+
