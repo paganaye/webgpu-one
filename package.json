@@ -11,12 +11,14 @@
     "triangle": "google-chrome --enable-unsafe-webgpu --enable-features=Vulkan,UseSkiaRenderer https://webgpu.github.io/webgpu-samples/samples/helloTriangle"
   },
   "devDependencies": {
+    "@types/dat.gui": "^0.7.10",
     "@webgpu/types": "^0.1.32",
     "typescript": "^5.0.2",
     "vite": "^4.3.2"
   },
   "dependencies": {
     "@gltf-transform/core": "^1.2.1",
+    "dat.gui": "^0.7.9",
     "gl-matrix": "^3.4.3",
     "wgpu-matrix": "^2.3.0"
   }

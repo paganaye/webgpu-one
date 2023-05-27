@@ -198,7 +198,7 @@ export async function setupWebGpu(canvas: HTMLCanvasElement, _output: HTMLDivEle
   function frame() {
     // Sample is no longer the active page.
 
-    renderPassDescriptor.colorAttachments[0].view = context
+    (renderPassDescriptor as any).colorAttachments[0].view = context
       .getCurrentTexture()
       .createView();
 
