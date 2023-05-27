@@ -5,7 +5,7 @@ let canvas = document.getElementById('canvas') as HTMLCanvasElement
 let output = document.getElementById('output') as HTMLCanvasElement
 
 
-let pages = ["triangle", "particles", "game-of-life", "boids", "compute-rasterizer", "test"];
+let pages = ["triangle", "particles", "game-of-life", "boids", "compute-rasterizer", "mona", "test"];
 let page = document.location.hash
 if (page[0] == '#') page = page.substring(1);
 else document.location.hash = "#triangle";

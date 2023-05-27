@@ -300,5 +300,6 @@ export async function loadModel(url: string) {
     finalPositions.push(positions[index2]);
     finalPositions.push(positions[index3]);
   }
+  console.log(JSON.stringify( finalPositions ))
   return new Float32Array(finalPositions);
 }
