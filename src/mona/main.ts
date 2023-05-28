@@ -1,7 +1,7 @@
-import * as dat from "dat.gui"
 // inspired originally by Tim Holman
 // Bezier curve simulator
 // https://codepen.io/tholman/pen/kKKVxB?editors=0010
+import * as dat from "dat.gui"
 
 interface Point {
   x: number;
@@ -22,7 +22,7 @@ class BezierTriangle {
   constructor(readonly canvas: HTMLCanvasElement, readonly points: Point[], readonly img: HTMLImageElement) {
     this.points = points;
     let gui = new dat.GUI();
-    for (let i = 0; i <= 7; i++) {
+    for (let i = 0; i < 9; i++) {
       let f = gui.addFolder("p" + i);
       f.add(points[i], "x", -200, 200);
       f.add(points[i], "y", -200, 200);
@@ -36,13 +36,13 @@ class BezierTriangle {
     this.resize();
     document.body.onresize = () => this.resize();
 
-
     var imgCanvas = document.createElement("canvas");
+
+    // Set the canvas dimensions to match the image
     imgCanvas.width = 256;
     imgCanvas.height = 256;
-    // Set the canvas dimensions to match the image
     var imgCtx = imgCanvas.getContext("2d")!;
-    imgCtx.drawImage(this.img, 0, 0);
+    imgCtx.drawImage(img, 0, 0);
     this.imageData = imgCtx.getImageData(0, 0, 256, 256);
     // Get the pixel data array
   }
@@ -58,7 +58,7 @@ class BezierTriangle {
     var g = data[index + 1];
     var b = data[index + 2];
     // var alpha = data[index + 3];
-    return { r, g, b }
+    return { r, g, b };
   }
 
   resize() {
@@ -118,8 +118,8 @@ class BezierTriangle {
       [0, 0, (-2 * far * near) / (far - near), 0]
     ];
 
-    this.renderPoints();
     this.drawQuadraticBezierSurface(this.points);
+    this.renderPoints();
   }
 
   drawQuadraticBezierSurface(p: Point[]) {
@@ -140,13 +140,13 @@ class BezierTriangle {
       let vSqr = v * v;
       let mv = 1 - v;
       let mvSqr = mv * mv;
-      let tmvv = 2 * mv * v
+      let tmvv = 2 * mv * v;
 
       let u = 0;
       while (u <= 1) {
         let uSqr = u * u;
         let mu = 1 - u;
-        let tmuu = mu * u;
+        let tmuu = 2 * mu * u;
         let muSqr = mu * mu;
         let x, y, z;
 
@@ -166,10 +166,9 @@ class BezierTriangle {
         y = mvSqr * yh + tmvv * ym + vSqr * yl;
         z = mvSqr * zh + tmvv * zm + vSqr * zl;
 
-
         let pt = this.project({ x, y, z });
         if (pt) {
-          let { r, g, b } = this.getPixel(u * 256, v * 256)
+          let { r, g, b } = this.getPixel(u * 256, v * 256);
           this.context.fillStyle = `rgb(${r}, ${g}, ${b})`;
           this.context.fillRect(pt.x, pt.y, 2, 2);
         }
@@ -180,11 +179,10 @@ class BezierTriangle {
   }
 }
 
-
 export function setupWebGpu(canvas: HTMLCanvasElement, output: HTMLDivElement) {
   output.innerHTML = '<img style="display:none;" id="mona" src="/mona-lisa-square.jpg" />'
   // debugger;
-  
+
   setTimeout(() => {
     let img = document.getElementById("mona") as HTMLImageElement;
     img.onload = () => {

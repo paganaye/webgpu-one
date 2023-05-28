@@ -244,7 +244,7 @@ function createComputePass(presentationSize: any, device: any, verticesArray: an
     const now = Date.now() / 1000;
     // Move the camera 
     mat4.translate(viewMatrix, viewMatrix, vec3.fromValues(4, 3, -10));
-    const modelViewProjectionMatrix = mat4.create();
+    const modelViewProjectionMatrix = mat4.create() as Float32Array;
     const modelMatrix = mat4.create();
     // Rotate model over time
     mat4.rotate(modelMatrix, modelMatrix, now, vec3.fromValues(0, 1, 0));
