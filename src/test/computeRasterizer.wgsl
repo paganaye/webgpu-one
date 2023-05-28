@@ -50,7 +50,8 @@ fn color_pixel(x: u32, y: u32, r: u32, g: u32, b: u32) {
     atomicMin(&outputColorBuffer.values[pixelID + 2u], b);
 }
 
-fn draw_triangle(v1: vec3<f32>, v2: vec3<f32>, v3: vec3<f32>) {
+fn draw_quad(p0: vec3<f32>, p1: vec3<f32>, p2: vec3<f32>, p3: vec3<f32>,p4: vec3<f32>, p5: vec3<f32>, p6: vec3<f32>, p7: vec3<f32>, p8: vec3<f32>) {
+/*
     let min_max = get_min_max(v1, v2, v3);
     let startX = u32(min_max.x);
     let startY = u32(min_max.y);
@@ -66,25 +67,91 @@ fn draw_triangle(v1: vec3<f32>, v2: vec3<f32>, v3: vec3<f32>) {
             let G = color;
             let B = color;
 
-            if bc.x < 0.0 || bc.y < 0.0 || bc.z < 0.0 {
-        continue;
+            if bc.x >= 0.0 && bc.y >= 0.0 && bc.z >= 0.0 {
+                color_pixel(x, y, u32(R), u32(G), u32(B));
             }
-            color_pixel(x, y, u32(R), u32(G), u32(B));
+        }
+    }
+
+    for (var x: u32 = 0; x <= 255; x = x + 1u) {
+        for (var y: u32 = 0; y <= 255; y = y + 1u) {
+            // let bc = barycentric(v1, v2, v3, vec2<f32>(f32(x), f32(y)));
+            let color = 128;
+
+            let R = color;
+            let G = color;
+            let B = color;
+
+            //if bc.x >= 0.0 && bc.y >= 0.0 && bc.z >= 0.0 {
+                color_pixel(x, y, u32(R), u32(G), u32(B));
+            //}
+        }
+    }
+
+*/
+
+    var v: f32 = 0.0;
+    //context.lineWidth = 1.5;
+    var step: f32 = 1.0 / 256.0;
+
+    loop {
+        var vSqr: f32 = v * v;
+        var mv: f32 = 1.0 - v;
+        var mvSqr: f32 = mv * mv;
+        var tmvv: f32 = 2.0 * mv * v;
+
+        var u: f32 = 0.0;
+        loop {
+            var uSqr: f32 = u * u;
+            var mu: f32 = 1.0 - u;
+            var tmuu: f32 = 2.0 * mu * u;
+            var muSqr: f32 = mu * mu;
+            var x: f32;
+            var y: f32;
+            var z: f32;
+
+            var xh: f32 = muSqr * p0.x + tmuu * p1.x + uSqr * p2.x;
+            var yh: f32 = muSqr * p0.y + tmuu * p1.y + uSqr * p2.y;
+            var zh: f32 = muSqr * p0.z + tmuu * p1.z + uSqr * p2.z;
+
+            var xm: f32 = muSqr * p3.x + tmuu * p4.x + uSqr * p5.x;
+            var ym: f32 = muSqr * p3.y + tmuu * p4.y + uSqr * p5.y;
+            var zm: f32 = muSqr * p3.z + tmuu * p4.z + uSqr * p5.z;
+
+            var xl: f32 = muSqr * p6.x + tmuu * p7.x + uSqr * p8.x;
+            var yl: f32 = muSqr * p6.y + tmuu * p7.y + uSqr * p8.y;
+            var zl: f32 = muSqr * p6.z + tmuu * p7.z + uSqr * p8.z;
+
+            x = mvSqr * xh + tmvv * xm + vSqr * xl;
+            y = mvSqr * yh + tmvv * ym + vSqr * yl;
+            z = mvSqr * zh + tmvv * zm + vSqr * zl;
+
+            //  var pt = project(Point(x, y, z));
+            //   if (pt != null) {
+            //     var rgbo = getPixel(u * 256.0, v * 256.0);
+            //     context.fillStyle = vec4<f32>(rgbo.r / 255.0, rgbo.g / 255.0, rgbo.b / 255.0, 1.0);
+            //     context.fillRect(pt.x, pt.y, 2.0, 2.0);
+            //   }
+            let color = 128;
+
+            let R = color;
+            let G = color;
+            let B = color;
+            color_pixel(u32(x), u32(y), u32(R), u32(G), u32(B));
+
+            u += step;
+            if (u > 1.0) {
+                break;
+            }
+        }
+        v += step;
+        if (v > 1.0) {
+            break;
         }
     }
 }
 
-fn draw_line(v1: vec3<f32>, v2: vec3<f32>) {
-    let v1Vec = vec2<f32>(v1.x, v1.y);
-    let v2Vec = vec2<f32>(v2.x, v2.y);
 
-    let dist = i32(distance(v1Vec, v2Vec));
-    for (var i = 0; i < dist; i = i + 1) {
-        let x = u32(v1.x + f32(v2.x - v1.x) * (f32(i) / f32(dist)));
-        let y = u32(v1.y + f32(v2.y - v1.y) * (f32(i) / f32(dist)));
-        color_pixel(x, y, 255u, 255u, 255u);
-    }
-}
 
 fn project(v: Vertex) -> vec3<f32> {
     var screenPos = uniforms.modelViewProjectionMatrix * vec4<f32>(v.x, v.y, v.z, 1.0);
@@ -104,17 +171,31 @@ fn is_off_screen(v: vec3<f32>) -> bool {
 
 @compute @workgroup_size(256, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let index = global_id.x * 3u;
+    let index = global_id.x * 9u;
 
-    let v1 = project(vertexBuffer.values[index + 0u]);
-    let v2 = project(vertexBuffer.values[index + 1u]);
-    let v3 = project(vertexBuffer.values[index + 2u]);
+    let v0 = project(vertexBuffer.values[index + 0u]);
+    let v1 = project(vertexBuffer.values[index + 1u]);
+    let v2 = project(vertexBuffer.values[index + 2u]);
+    let v3 = project(vertexBuffer.values[index + 3u]);
+    let v4 = project(vertexBuffer.values[index + 4u]);
+    let v5 = project(vertexBuffer.values[index + 5u]);
+    let v6 = project(vertexBuffer.values[index + 6u]);
+    let v7 = project(vertexBuffer.values[index + 7u]);
+    let v8 = project(vertexBuffer.values[index + 8u]);
 
-    if is_off_screen(v1) || is_off_screen(v2) || is_off_screen(v3) {
+    if is_off_screen(v0) 
+        && is_off_screen(v1) 
+        && is_off_screen(v2) 
+        && is_off_screen(v3) 
+        && is_off_screen(v4) 
+        && is_off_screen(v5) 
+        && is_off_screen(v6) 
+        && is_off_screen(v7)
+        && is_off_screen(v8) {
         return;
     }
 
-    draw_triangle(v1, v2, v3);
+    draw_quad(v0, v1, v2, v3, v4, v5, v6, v7, v8);
 }
 
 

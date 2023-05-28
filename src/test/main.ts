@@ -284,7 +284,16 @@ export async function loadModel() {
   let p5 = 0.5;
   return new Float32Array(
     [
-      m5, m5, m5, m5, p5, m5, p5, m5, m5,
-      p5, p5, m5, p5, m5, m5, m5, p5, m5
+      -1, -1, 0,
+      -.5, -1.5, 0,
+      1, -1, 0,
+
+      -.5, 0, 0,
+      .5, .5, 0,
+      1.5, 0, 0,
+
+      -1, 1, 0,
+      .5, 1.2, 0,
+      1, 1, 0
     ]);
 }
