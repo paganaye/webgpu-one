@@ -24,8 +24,8 @@ export async function setupWebGpu(canvas: HTMLCanvasElement, _output: HTMLDivEle
     alphaMode: "opaque"
   });
 
-
-  const { addComputePass, outputColorBuffer } = createComputePass(presentationSize, device, verticesArray);
+  const texture = await createTexture(device)
+  const { addComputePass, outputColorBuffer } = createComputePass(presentationSize, device, verticesArray, texture);
   const { addFullscreenPass } = createFullscreenPass(presentationFormat, device, presentationSize, outputColorBuffer);
 
   function draw() {
@@ -40,6 +40,34 @@ export async function setupWebGpu(canvas: HTMLCanvasElement, _output: HTMLDivEle
   }
 
   draw();
+}
+
+async function createTexture(device: GPUDevice) {
+  let texture: GPUTexture;
+
+  const img = document.createElement('img');
+  img.src = new URL(
+    '/mona-lisa-square.jpg',
+    import.meta.url
+  ).toString();
+  await img.decode();
+  const imageBitmap = await createImageBitmap(img);
+
+  texture = device.createTexture({
+    size: [imageBitmap.width, imageBitmap.height, 1],
+    format: 'rgba8unorm',
+    usage:
+      GPUTextureUsage.TEXTURE_BINDING |
+    //  GPUTextureUsage.STORAGE_BINDING |
+      GPUTextureUsage.COPY_DST |
+      GPUTextureUsage.RENDER_ATTACHMENT,
+  });
+  device.queue.copyExternalImageToTexture(
+    { source: imageBitmap },
+    { texture: texture },
+    [imageBitmap.width, imageBitmap.height]
+  );
+  return texture;
 }
 
 function createFullscreenPass(presentationFormat: any, device: any, presentationSize: any, finalColorBuffer: any) {
@@ -144,7 +172,7 @@ function createFullscreenPass(presentationFormat: any, device: any, presentation
   return { addFullscreenPass };
 }
 
-function createComputePass(presentationSize: any, device: any, verticesArray: any) {
+function createComputePass(presentationSize: any, device: any, verticesArray: any, texture: any) {
   const WIDTH = presentationSize[0];
   const HEIGHT = presentationSize[1];
   const COLOR_CHANNELS = 3;
@@ -174,6 +202,10 @@ function createComputePass(presentationSize: any, device: any, verticesArray: an
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
 
+  // I don't have a clue (no training)
+  // on how to pass the mona texture to my wgsl code
+
+
   const bindGroupLayout = device.createBindGroupLayout({
     entries: [
       {
@@ -197,9 +229,17 @@ function createComputePass(presentationSize: any, device: any, verticesArray: an
           type: "uniform",
         },
       }
+      // {
+      //   binding: 3,
+      //   visibility: GPUShaderStage.COMPUTE,
+      //   buffer: {
+      //     type: "uniform",
+      //   }
+      // }
     ]
   });
 
+  
   const bindGroup = device.createBindGroup({
     layout: bindGroupLayout,
     entries: [
@@ -221,6 +261,14 @@ function createComputePass(presentationSize: any, device: any, verticesArray: an
           buffer: UBOBuffer
         }
       }
+  
+      // {
+      //   binding: 3,
+      //   resource: {
+      //     buffer: textureView
+      //   }
+      // }
+
     ]
   });
 
