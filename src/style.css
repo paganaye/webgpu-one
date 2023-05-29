@@ -20,9 +20,4 @@ a:hover {
 
 body {
   padding: 1em;
-  margin: 0;
-  display: flex row;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
 }
